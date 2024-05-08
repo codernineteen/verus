@@ -47,14 +47,27 @@ void main()
 
 	// update committed intersection
 	while(rayQueryProceedEXT(rayQuery))
-	{
-		
+	{	
 	}
+
+	vec3 pixelColor;
+	// check if the ray hit something
+	if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+	{
+		pixelColor = vec3(0.0, rayQueryGetIntersectionBarycentricsEXT(rayQuery, true));
+		pixelColor.x = 1 - pixelColor.y - pixelColor.z;
+	}
+	else 
+	{
+		pixelColor = vec3(0.0, 0.0, 1.0);
+	}
+
+
 	// get the t-value of the committed intersection
 	const float t = rayQueryGetIntersectionTEXT(rayQuery, true); // true means that the t-value is returned
 
 	// buffer is one-dimensional, so we need to calculate the linear index
 	uint linearIndex = resolution.x * pixel.y + pixel.x;
 
-	imageData[linearIndex] = vec3(t / 10.0);
+	imageData[linearIndex] = pixelColor;
 }
