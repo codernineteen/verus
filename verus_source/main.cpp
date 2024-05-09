@@ -20,8 +20,8 @@
 #include <nvh/fileoperations.hpp>
 
 // rendered image size
-static const uint64_t render_width = 800;
-static const uint64_t render_height = 600;
+static const uint64_t render_width = 1920;
+static const uint64_t render_height = 1280;
 
 // work group resolution (16 x 8 = 128)
 static const uint32_t workgroup_width = 16;
@@ -115,15 +115,16 @@ int main(int argc, const char** argv)
 	assert(reader.Valid());
 
 	// get all vertices
-	const std::vector<tinyobj::real_t> obj_vertices = reader.GetAttrib().vertices;
+	const std::vector<tinyobj::real_t> obj_vertices = reader.GetAttrib().GetVertices();
 	// get shape (shape includes mesh, a set of lines and a set of points)
-	const std::vector<tinyobj::shape_t> obj_shapes = reader.GetShapes();
+	const std::vector<tinyobj::shape_t>& obj_shapes = reader.GetShapes();
 	assert(obj_shapes.size() == 1);
 	const tinyobj::shape_t& shape = obj_shapes[0];
 
 	// get indices
 	std::vector<uint32_t> obj_indices;
-	for (const auto& index : shape.mesh.indices) 
+	obj_indices.reserve(shape.mesh.indices.size());
+	for (const tinyobj::index_t& index : shape.mesh.indices) 
 	{
 		obj_indices.push_back(index.vertex_index);
 	}
@@ -169,15 +170,15 @@ int main(int argc, const char** argv)
 		VkAccelerationStructureGeometryKHR geometry = nvvk::make<VkAccelerationStructureGeometryKHR>();
 		geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
 		geometry.geometry.triangles = triangles_data;
-		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR | VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
 		blas.asGeometry.push_back(geometry);
 
 		// define build range
 		VkAccelerationStructureBuildRangeInfoKHR build_range = nvvk::make<VkAccelerationStructureBuildRangeInfoKHR>();
-		build_range.firstVertex = 0;
-		build_range.primitiveCount = static_cast<uint32_t>(obj_indices.size() / 3);
-		build_range.primitiveOffset = 0;
-		build_range.transformOffset = 0;
+		build_range.firstVertex                              = 0;
+		build_range.primitiveCount                           = static_cast<uint32_t>(obj_indices.size() / 3);
+		build_range.primitiveOffset                          = 0;
+		build_range.transformOffset                          = 0;
 		blas.asBuildOffsetInfo.push_back(build_range);
 		blases.push_back(blas);
 	}
@@ -190,11 +191,11 @@ int main(int argc, const char** argv)
 	std::vector<VkAccelerationStructureInstanceKHR> instances;
 	{
 		VkAccelerationStructureInstanceKHR instance{};
-		instance.accelerationStructureReference = raytracing_builder.getBlasDeviceAddress(0);
-		instance.instanceCustomIndex = 0;
-		instance.mask = 0xFF;
+		instance.accelerationStructureReference         = raytracing_builder.getBlasDeviceAddress(0);
+		instance.instanceCustomIndex                    = 0;
+		instance.mask                                   = 0xFF;
 		instance.instanceShaderBindingTableRecordOffset = 0;
-		instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+		instance.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
 		instance.transform.matrix[0][0] = instance.transform.matrix[1][1] = instance.transform.matrix[2][2] = 1.0f;
 
 		instances.push_back(instance);
@@ -205,16 +206,17 @@ int main(int argc, const char** argv)
 	nvvk::DescriptorSetContainer descriptor_container(context);
 	descriptor_container.addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	descriptor_container.addBinding(1, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+	descriptor_container.addBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+	descriptor_container.addBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	descriptor_container.initLayout();
 	descriptor_container.initPool(1);
 	descriptor_container.initPipeLayout();
 
 	// update descriptor set
-	std::array<VkWriteDescriptorSet, 2> write_desc_sets{};
+	std::array<VkWriteDescriptorSet, 4> write_desc_sets{};
 	// buffer write 
 	VkDescriptorBufferInfo buffer_desc_info = nvvk::make<VkDescriptorBufferInfo>();
 	buffer_desc_info.buffer                 = storage_buffer.buffer;
-	buffer_desc_info.offset                 = 0;
 	buffer_desc_info.range                  = buffer_size;
 	write_desc_sets[0]                      = descriptor_container.makeWrite(0, 0, &buffer_desc_info);
 
@@ -224,6 +226,18 @@ int main(int argc, const char** argv)
 	as_write.accelerationStructureCount                   = 1;
 	as_write.pAccelerationStructures                      = &tlas_copy;
 	write_desc_sets[1]                                    = descriptor_container.makeWrite(0, 1, &as_write);
+
+	// buffer write 
+	VkDescriptorBufferInfo vertex_buffer_desc_info = nvvk::make<VkDescriptorBufferInfo>();
+	vertex_buffer_desc_info.buffer                 = vertex_buffer.buffer;
+	vertex_buffer_desc_info.range                  = VK_WHOLE_SIZE;
+	write_desc_sets[2] = descriptor_container.makeWrite(0, 2, &vertex_buffer_desc_info);
+
+	// buffer write 
+	VkDescriptorBufferInfo index_buffer_desc_info = nvvk::make<VkDescriptorBufferInfo>();
+	index_buffer_desc_info.buffer                 = index_buffer.buffer;
+	index_buffer_desc_info.range                  = VK_WHOLE_SIZE;
+	write_desc_sets[3] = descriptor_container.makeWrite(0, 3, &index_buffer_desc_info);
 
 	vkUpdateDescriptorSets(context, static_cast<uint32_t>(write_desc_sets.size()), write_desc_sets.data(), 0, nullptr);
 
