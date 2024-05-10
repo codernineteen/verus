@@ -26,6 +26,20 @@ struct HitRecord
 	vec3 normal;
 };
 
+uint stepRNG(uint rngState)
+{
+	return rngState * 747796405 + 1;
+}
+
+float stepAndOutputRNGFloat(inout uint rngState)
+{
+	rngState  = stepRNG(rngState);
+	uint word = ((rngState >> ((rngState) >> 28 + 4)) ^ rngState) * 277803737;
+	word      = (word >> 22) ^ word;
+	return float(word) / 4294967295.0f;
+	
+}
+
 HitRecord getObjectHitRecord(rayQueryEXT rayQuery)
 {
 	HitRecord record;
@@ -52,7 +66,7 @@ HitRecord getObjectHitRecord(rayQueryEXT rayQuery)
 
 	record.position = triangleIntersectionPoint;
 	record.normal = triangleNormal;
-	record.color = vec3(0.7f);
+	record.color = vec3(0.9f);
 
 	return record;
 }
@@ -61,6 +75,7 @@ vec3 skyColor(vec3 direction)
 {
 	if(direction.y > 0.0f)
 	{
+		// linearly interpolated sky color between horizon and zenith
 		return mix(vec3(1.0f), vec3(0.25f, 0.5f, 0.1f), direction.y);
 	}
 	else
@@ -71,7 +86,7 @@ vec3 skyColor(vec3 direction)
 
 void main()
 {
-	const uvec2 resolution = uvec2(1920, 1280);
+	const uvec2 resolution = uvec2(1920, 1080);
 
 	// Get current pixel coordinates.
 	const uvec2 pixel = gl_GlobalInvocationID.xy; 
@@ -79,57 +94,79 @@ void main()
 	if(pixel.x >= resolution.x || pixel.y >= resolution.y) 
 		return; // check if pixel is outside of the image
 
+	uint rngState = resolution.x * pixel.y + pixel.x; // initial seed
 
 	// Calculate the ray direction.
-	const vec3 cameraOrigin = vec3(-0.001, 1, 6);
-	vec3 rayOrigin          = cameraOrigin;
-	
-	const vec2 screenUV = vec2(
-		(2.0 * float(pixel.x) + 1.0 - resolution.x) / resolution.y,
-		-(2.0 * float(pixel.y) + 1.0 - resolution.y) / resolution.y // flip y-axis
-		);
-	
+	const vec3 cameraOrigin = vec3(-0.001, 1.0, 6.0);
+
+	// field of view
 	const float fovVerticalSlope = 1.0 / 5.0;
-	vec3 rayDirection            = vec3(fovVerticalSlope * screenUV.x, fovVerticalSlope * screenUV.y, -1.0);
+		
+	vec3 pixelColor = vec3(0.0); // finalized pixel color
 
-	rayQueryEXT rayQuery;
-	rayQueryInitializeEXT(
-		rayQuery,
-		tlas,
-		gl_RayFlagsOpaqueEXT,
-		0xFF,
-		rayOrigin,
-		0.0,
-		rayDirection,
-		10000.0
-	);
-
-	// update committed intersection
-	while(rayQueryProceedEXT(rayQuery))
-	{	
-	}
-
-	vec3 pixelColor;
-
-	// check if the ray hit something
-	if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+	const int NUM_SAMPLES = 64;
+	for(int sampleIdx = 0; sampleIdx < 64; sampleIdx++)
 	{
-		HitRecord record = getObjectHitRecord(rayQuery);
+		vec3 rayOrigin = cameraOrigin;
 
+		const vec2 randomPixelCenter = vec2(pixel) + vec2(stepAndOutputRNGFloat(rngState), stepAndOutputRNGFloat(rngState));
+		const vec2 screenUV = vec2(
+			(2.0 * float(randomPixelCenter.x) + 1.0 - resolution.x) / resolution.y,
+			-(2.0 * float(randomPixelCenter.y) + 1.0 - resolution.y) / resolution.y // flip y-axis
+			);
 
-		pixelColor = vec3(0.5) + 0.5 * record.normal;
+		vec3 rayDirection = vec3(fovVerticalSlope * screenUV.x, fovVerticalSlope * screenUV.y, -1.0);
+		rayDirection      = normalize(rayDirection); // normalize ray direction
+	
+		vec3 rayColor   = vec3(1.0); // accumulated ray color
+
+		for(int traceSegments = 0; traceSegments < 32; traceSegments++) 
+		{
+			rayQueryEXT rayQuery;
+			rayQueryInitializeEXT(     
+				rayQuery,			   // ray query obejct
+				tlas,				   // top level acceleration structure from layout binding
+				gl_RayFlagsOpaqueEXT,  // ray flags about the way of treating geometries
+				0xFF,				   // instance mask, determines which instances are intersected
+				rayOrigin,			   // ray origin
+				0.0,				   // minimum t-value
+				rayDirection,		   // ray direction
+				10000.0				   // maximum t-value
+			);
+
+			// update committed intersection
+			while(rayQueryProceedEXT(rayQuery))
+			{	
+
+			}
+
+			// check if the ray hit something
+			if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+			{
+				HitRecord record = getObjectHitRecord(rayQuery);
+
+				rayColor *= record.color;
+			
+				// update current ray information
+				rayOrigin     = record.position - 0.0001 * sign(dot(rayDirection, record.normal)) * record.normal;                // move the origin a bit along the normal to avoid self-intersection
+
+				rayDirection  =  reflect(rayDirection, record.normal);
+			}
+			else 
+			{
+				// if the ray missed, take sky color
+				rayColor *= skyColor(rayDirection);
+
+				// accumulate the ray color to the pixel color
+				pixelColor += rayColor;
+				break;
+			}
+		}
 	}
-	else 
-	{
-		pixelColor = vec3(0.0, 0.0, 1.0);
-	}
 
-
-	// get the t-value of the committed intersection
-	const float t = rayQueryGetIntersectionTEXT(rayQuery, true); // true means that the t-value is returned
 
 	// buffer is one-dimensional, so we need to calculate the linear index
 	uint linearIndex = resolution.x * pixel.y + pixel.x;
 
-	imageData[linearIndex] = pixelColor;
+	imageData[linearIndex] = pixelColor / float(NUM_SAMPLES); // averaging sampled colors
 }

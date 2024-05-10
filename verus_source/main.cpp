@@ -21,7 +21,7 @@
 
 // rendered image size
 static const uint64_t render_width = 1920;
-static const uint64_t render_height = 1280;
+static const uint64_t render_height = 1080;
 
 // work group resolution (16 x 8 = 128)
 static const uint32_t workgroup_width = 16;
