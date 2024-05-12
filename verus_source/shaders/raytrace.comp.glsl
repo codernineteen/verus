@@ -19,6 +19,14 @@ layout(binding = 3, set = 0, scalar) buffer Indices
 	uint indices[];
 };
 
+struct Ray
+{
+	vec3  origin;
+	vec3  dir;
+	float tmin;
+	float tmax;
+};
+
 struct HitRecord
 {
 	vec3 color;
@@ -66,8 +74,17 @@ HitRecord getObjectHitRecord(rayQueryEXT rayQuery)
 
 	record.position = triangleIntersectionPoint;
 	record.normal = triangleNormal;
-	record.color = vec3(0.9f);
-
+	record.color = vec3(0.8f);
+	
+	const float dotX = dot(record.normal, vec3(1.0, 0.0, 0.0));
+	if(dotX > 0.99)
+	{
+		record.color = vec3(0.8, 0.0, 0.0);
+	}
+	else
+	{
+		record.color = vec3(0.0, 0.8, 0.0);
+	}
 	return record;
 }
 
@@ -84,8 +101,30 @@ vec3 skyColor(vec3 direction)
 	}
 }
 
+Ray initializePinholeRay(vec3 origin, vec2 pixel, float cameraFovAngle) {
+	// field of view
+	float tanHalfAngle = tan(cameraFovAngle / 2.0f);
+
+	// calculate the ray direction
+	vec3 rayDir = normalize(vec3(
+		tanHalfAngle * pixel.x,
+		tanHalfAngle * pixel.y, // pixel.y is flipped already
+		-1.0f
+	));
+
+	Ray ray;
+	ray.origin = origin;
+	ray.tmin = 0.0;
+	ray.tmax = 10000.0;
+	ray.dir = rayDir;
+
+	return ray;
+}
+
 void main()
 {
+	const float PI = 3.14159265359;
+	const float cameraFovAngle = PI / 2.0;
 	const uvec2 resolution = uvec2(1920, 1080);
 
 	// Get current pixel coordinates.
@@ -97,27 +136,24 @@ void main()
 	uint rngState = resolution.x * pixel.y + pixel.x; // initial seed
 
 	// Calculate the ray direction.
-	const vec3 cameraOrigin = vec3(-0.001, 1.0, 6.0);
+	const vec3 cameraOrigin = vec3(-0.001, 1.0, 3.0);
 
 	// field of view
-	const float fovVerticalSlope = 1.0 / 5.0;
-		
+	const float fovVerticalSlope = tan(PI / 4.0);
+
 	vec3 pixelColor = vec3(0.0); // finalized pixel color
 
 	const int NUM_SAMPLES = 64;
 	for(int sampleIdx = 0; sampleIdx < 64; sampleIdx++)
 	{
-		vec3 rayOrigin = cameraOrigin;
-
 		const vec2 randomPixelCenter = vec2(pixel) + vec2(stepAndOutputRNGFloat(rngState), stepAndOutputRNGFloat(rngState));
 		const vec2 screenUV = vec2(
 			(2.0 * float(randomPixelCenter.x) + 1.0 - resolution.x) / resolution.y,
 			-(2.0 * float(randomPixelCenter.y) + 1.0 - resolution.y) / resolution.y // flip y-axis
 			);
 
-		vec3 rayDirection = vec3(fovVerticalSlope * screenUV.x, fovVerticalSlope * screenUV.y, -1.0);
-		rayDirection      = normalize(rayDirection); // normalize ray direction
-	
+		// Initialize the ray
+		Ray ray = initializePinholeRay(cameraOrigin, screenUV, cameraFovAngle);
 		vec3 rayColor   = vec3(1.0); // accumulated ray color
 
 		for(int traceSegments = 0; traceSegments < 32; traceSegments++) 
@@ -128,10 +164,10 @@ void main()
 				tlas,				   // top level acceleration structure from layout binding
 				gl_RayFlagsOpaqueEXT,  // ray flags about the way of treating geometries
 				0xFF,				   // instance mask, determines which instances are intersected
-				rayOrigin,			   // ray origin
-				0.0,				   // minimum t-value
-				rayDirection,		   // ray direction
-				10000.0				   // maximum t-value
+				ray.origin,			   // ray origin
+				ray.tmin,			   // minimum t-value
+				ray.dir,		       // ray direction
+				ray.tmax			   // maximum t-value
 			);
 
 			// update committed intersection
@@ -148,14 +184,19 @@ void main()
 				rayColor *= record.color;
 			
 				// update current ray information
-				rayOrigin     = record.position - 0.0001 * sign(dot(rayDirection, record.normal)) * record.normal;                // move the origin a bit along the normal to avoid self-intersection
+				ray.origin = record.position - 0.0001 * sign(dot(ray.dir, record.normal)) * record.normal; // move the origin a bit along the normal to avoid self-intersection
 
-				rayDirection  =  reflect(rayDirection, record.normal);
+				// diffuse reflection
+				const float theta = 6.2831853 * stepAndOutputRNGFloat(rngState);
+				const float u     = 2.0 * stepAndOutputRNGFloat(rngState) - 1.0;
+				const float r     = sqrt(1.0 - u * u);
+				ray.dir           = record.normal + vec3(r * cos(theta), r * sin(theta), u);
+				ray.dir           = normalize(ray.dir);
 			}
 			else 
 			{
 				// if the ray missed, take sky color
-				rayColor *= skyColor(rayDirection);
+				rayColor *= skyColor(ray.dir);
 
 				// accumulate the ray color to the pixel color
 				pixelColor += rayColor;
