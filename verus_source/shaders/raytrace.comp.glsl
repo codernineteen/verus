@@ -69,19 +69,19 @@ HitRecord getObjectHitRecord(rayQueryEXT rayQuery)
 	vec3 barycentrics = vec3(0.0, rayQueryGetIntersectionBarycentricsEXT(rayQuery, true));
 	barycentrics.x = 1.0 - barycentrics.y - barycentrics.z;
 
-	vec3 triangleNormal = normalize(cross(v1 - v0, v2 - v0));
 	vec3 triangleIntersectionPoint = barycentrics.x * v0 + barycentrics.y * v1 + barycentrics.z * v2;
-
 	record.position = triangleIntersectionPoint;
+
+	vec3 triangleNormal = normalize(cross(v1 - v0, v2 - v0));
 	record.normal = triangleNormal;
-	record.color = vec3(0.8f);
+	record.color = vec3(0.7f);
 	
 	const float dotX = dot(record.normal, vec3(1.0, 0.0, 0.0));
 	if(dotX > 0.99)
 	{
 		record.color = vec3(0.8, 0.0, 0.0);
 	}
-	else
+	else if(dotX < -0.99)
 	{
 		record.color = vec3(0.0, 0.8, 0.0);
 	}
@@ -93,7 +93,7 @@ vec3 skyColor(vec3 direction)
 	if(direction.y > 0.0f)
 	{
 		// linearly interpolated sky color between horizon and zenith
-		return mix(vec3(1.0f), vec3(0.25f, 0.5f, 0.1f), direction.y);
+		return mix(vec3(1.0f), vec3(0.25f, 0.5f, 1.0f), direction.y);
 	}
 	else
 	{
@@ -121,6 +121,13 @@ Ray initializePinholeRay(vec3 origin, vec2 pixel, float cameraFovAngle) {
 	return ray;
 }
 
+Ray generateOrthographicRay(vec2 pixel, float cameraFovDistance)
+{
+	pixel *= cameraFovDistance;
+	vec3 origin = vec3(pixel, 0.f);
+	return Ray(origin, vec3(0.f, 0.f, -1.f), 0.0, 10000.0);
+}
+
 void main()
 {
 	const float PI = 3.14159265359;
@@ -144,7 +151,7 @@ void main()
 	vec3 pixelColor = vec3(0.0); // finalized pixel color
 
 	const int NUM_SAMPLES = 64;
-	for(int sampleIdx = 0; sampleIdx < 64; sampleIdx++)
+	for(int sampleIdx = 0; sampleIdx < NUM_SAMPLES; sampleIdx++)
 	{
 		const vec2 randomPixelCenter = vec2(pixel) + vec2(stepAndOutputRNGFloat(rngState), stepAndOutputRNGFloat(rngState));
 		const vec2 screenUV = vec2(
@@ -153,7 +160,10 @@ void main()
 			);
 
 		// Initialize the ray
+		vec2 lensOffset = vec2(stepAndOutputRNGFloat(rngState), stepAndOutputRNGFloat(rngState));
+
 		Ray ray = initializePinholeRay(cameraOrigin, screenUV, cameraFovAngle);
+		//Ray ray = generateOrthographicRay(screenUV, 3.0);
 		vec3 rayColor   = vec3(1.0); // accumulated ray color
 
 		for(int traceSegments = 0; traceSegments < 32; traceSegments++) 
