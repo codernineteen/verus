@@ -1,15 +1,22 @@
+// stb image
 #ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
 #include <stb_image_write.h>
 
+// tiniobjloader
 #ifndef TINYOBJLOADER_IMPLEMENTATION
 #define TINYOBJLOADER_IMPLEMENTATION
 #endif
 #include <tiny_obj_loader.h>
 
+// std
 #include <array>
 
+// nvh
+#include <nvh/fileoperations.hpp>
+
+// nvvk
 #include <nvvk/context_vk.hpp>
 #include <nvvk/structs_vk.hpp>           // initialize vulkan structures with nvvk::make
 #include <nvvk/resourceallocator_vk.hpp> // NVKK memory allocator
@@ -17,7 +24,6 @@
 #include <nvvk/shaders_vk.hpp>           
 #include <nvvk/descriptorsets_vk.hpp>
 #include <nvvk/raytraceKHR_vk.hpp>
-#include <nvh/fileoperations.hpp>
 
 // rendered image size
 static const uint64_t render_width = 1920;
@@ -84,19 +90,20 @@ int main(int argc, const char** argv)
 	device_info.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayquery_features); // false parameter means that the extension is required.
 
 	// context instance
-	nvvk::Context           context;    // represent a single physical device and its information
+	nvvk::Context context;    // represent a single physical device and its information
 	context.init(device_info);
 	// check if the device supports the ray tracing extensions
 	assert(as_features.accelerationStructure == VK_TRUE && rayquery_features.rayQuery == VK_TRUE);
 
-	nvvk::ResourceAllocatorDedicated allocator; // memory allocator
+	// memory allocator
+	nvvk::ResourceAllocatorDedicated allocator;
 	allocator.init(context, context.m_physicalDevice);
 
 	// create a storage buffer
-	VkDeviceSize buffer_size = render_height * render_width * 3 * sizeof(float);
-	auto buffer_create_info  = nvvk::make<VkBufferCreateInfo>();
-	buffer_create_info.size  = buffer_size;
-	buffer_create_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	VkDeviceSize buffer_size               = render_height * render_width * 3 * sizeof(float);
+	VkBufferCreateInfo buffer_create_info  = nvvk::make<VkBufferCreateInfo>();
+	buffer_create_info.size                = buffer_size;
+	buffer_create_info.usage               = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 	
 	nvvk::Buffer storage_buffer = allocator.createBuffer(
 		buffer_create_info,
@@ -111,7 +118,7 @@ int main(int argc, const char** argv)
 		exe_path + PROJECT_NAME
 	};
 	tinyobj::ObjReader reader;
-	reader.ParseFromFile(nvh::findFile("scenes/cornellbox_original_merged.obj", search_paths));
+	reader.ParseFromFile(nvh::findFile("scenes/CornellBox-Original-Merged.obj", search_paths));
 	assert(reader.Valid());
 
 	// get all vertices
@@ -158,27 +165,27 @@ int main(int argc, const char** argv)
 
 		// define triangle
 		VkAccelerationStructureGeometryTrianglesDataKHR triangles_data = nvvk::make<VkAccelerationStructureGeometryTrianglesDataKHR>();
-		triangles_data.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-		triangles_data.vertexData.deviceAddress = vertex_address;
-		triangles_data.vertexStride = sizeof(float) * 3;
-		triangles_data.maxVertex = static_cast<uint32_t>(obj_vertices.size() / 3 - 1);
-		triangles_data.indexType = VK_INDEX_TYPE_UINT32;
-		triangles_data.indexData.deviceAddress = index_address;
+		triangles_data.vertexFormat                = VK_FORMAT_R32G32B32_SFLOAT;
+		triangles_data.vertexData.deviceAddress    = vertex_address;
+		triangles_data.vertexStride                = sizeof(float) * 3;
+		triangles_data.maxVertex                   = static_cast<uint32_t>(obj_vertices.size() / 3 - 1);
+		triangles_data.indexType                   = VK_INDEX_TYPE_UINT32;
+		triangles_data.indexData.deviceAddress     = index_address;
 		triangles_data.transformData.deviceAddress = 0;
 
 		// define geometry
 		VkAccelerationStructureGeometryKHR geometry = nvvk::make<VkAccelerationStructureGeometryKHR>();
-		geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-		geometry.geometry.triangles = triangles_data;
-		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+		geometry.geometry.triangles                 = triangles_data;
+		geometry.geometryType                       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+		geometry.flags                              = VK_GEOMETRY_OPAQUE_BIT_KHR;
 		blas.asGeometry.push_back(geometry);
 
 		// define build range
-		VkAccelerationStructureBuildRangeInfoKHR build_range = nvvk::make<VkAccelerationStructureBuildRangeInfoKHR>();
-		build_range.firstVertex                              = 0;
-		build_range.primitiveCount                           = static_cast<uint32_t>(obj_indices.size() / 3);
-		build_range.primitiveOffset                          = 0;
-		build_range.transformOffset                          = 0;
+		VkAccelerationStructureBuildRangeInfoKHR build_range;
+		build_range.firstVertex     = 0;
+		build_range.primitiveCount  = static_cast<uint32_t>(obj_indices.size() / 3);
+		build_range.primitiveOffset = 0;
+		build_range.transformOffset = 0;
 		blas.asBuildOffsetInfo.push_back(build_range);
 		blases.push_back(blas);
 	}
