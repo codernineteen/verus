@@ -47,6 +47,11 @@ Finally, Tap the 'configure' and 'generate' buttons in order.
 ![configure_generate](./docs/images/configure_generate.png)
 If you don't see any error ouput log in the console, Congrats! you can now enjoy this project.
 
+## Examples
+
+1. Cornell Box (diffuse reflection only)
+   ![cornell_box](./docs/images/cornell_box.png)
+
 ## Dependencies
 
 - [nvpro_core](https://github.com/nvpro-samples/nvpro_core)
