@@ -58,7 +58,23 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
 endforeach(GLSL)
 
 list(APPEND GLSL_SOURCES ${GLSL_HEADER_FILES})
-source_group("Shader Files" FILES ${GLSL_SOURCES})
+
+#####################################################################################
+# HLSL to SPIR-V build
+
+# first find the dxc compiler provided by the Vulkan SDK
+find_program(DXC_EXEC dxc HINTS
+  ${Vulkan_DXC_EXECUTABLE} 
+  /usr/bin 
+  /usr/local/bin 
+  ${VULKAN_SDK_PATH}/Bin
+  ${VULKAN_SDK_PATH}/Bin32
+  $ENV{VULKAN_SDK}/Bin/ 
+  $ENV{VULKAN_SDK}/Bin32/
+)
+
+message(STATUS ${DXC_EXEC})
+
 
 #####################################################################################
 # Executable
