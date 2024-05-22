@@ -1,74 +1,265 @@
-// third party
-#include <glfw/glfw3.h>
-#include <glm/glm.hpp>
-#include <nvpsystem.hpp>
+/*
+ * Copyright (c) 2014-2021, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2021 NVIDIA CORPORATION
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-// nvpro
-#include <nvh/cameramanipulator.hpp>
-#include <nvvk/context_vk.hpp>
 
-// define
+ // ImGui - standalone example application for Glfw + Vulkan, using programmable
+ // pipeline If you are new to ImGui, see examples/README.txt and documentation
+ // at the top of imgui.cpp.
+
+#include <array>
+
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_vulkan.h"
+#include "imgui.h"
+#include "imgui/imgui_helper.h"
+
+#include "app/verus_app.h"
+#include "imgui/imgui_camera_widget.h"
+#include "nvh/cameramanipulator.hpp"
+#include "nvh/fileoperations.hpp"
+#include "nvpsystem.hpp"
+#include "nvvk/commands_vk.hpp"
+#include "nvvk/context_vk.hpp"
+
+
+//////////////////////////////////////////////////////////////////////////
 #define UNUSED(x) (void)(x)
+//////////////////////////////////////////////////////////////////////////
 
-// global 
-std::vector<std::string> search_paths;
+// Default search path for shaders
+std::vector<std::string> defaultSearchPaths;
 
-// error handler for glfw
+
+// GLFW Callback functions
 static void onErrorCallback(int error, const char* description)
 {
-	fprintf(stderr, "GLFW Error : %d: %s\n", error, description);
+    fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-static int const RENDER_WIDTH = 1680;
-static int const RENDER_HEIGHT = 1050;
-
-int main(int argc, const char** argv)
+// Extra UI
+void renderUI(VerusApp& verusApp)
 {
-	UNUSED(argc);
+    ImGuiH::CameraWidget();
+    if (ImGui::CollapsingHeader("Light"))
+    {
+        ImGui::RadioButton("Point", &verusApp.m_pcRaster.lightType, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Infinite", &verusApp.m_pcRaster.lightType, 1);
 
-	// Setup GLFW window
-	glfwSetErrorCallback(onErrorCallback);
-	if (!glfwInit())
-	{
-		fprintf(stderr, "Failed to initialize GLFW\n");
-		return 1;
-	}
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	GLFWwindow* window = glfwCreateWindow(RENDER_WIDTH, RENDER_HEIGHT, PROJECT_NAME, nullptr, nullptr);
-
-	// Setup camera
-	CameraManip.setWindowSize(RENDER_WIDTH, RENDER_HEIGHT);
-	CameraManip.setLookat(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0));
-
-	// Setup basing things for application
-	NVPSystem system(PROJECT_NAME);
-
-	// Setup search paths
-	const std::string exe_path(argv[0], std::string(argv[0]).find_last_of("/\\") + 1);
-	search_paths = {
-		exe_path + PROJECT_RELDIRECTORY,
-		exe_path + PROJECT_RELDIRECTORY "..",
-		exe_path + PROJECT_RELDIRECTORY "../..",
-		exe_path + PROJECT_NAME
-	};
-
-	// Assert glfw vulkan is supported
-	assert(glfwVulkanSupported() == 1);
-	uint32_t count{ 0 };
-	auto required_extensions_glfw = glfwGetRequiredInstanceExtensions(&count);
-
-	// Configuring Vulkan extensions and Layers
-	nvvk::ContextCreateInfo context_info;
-	context_info.setVersion(1, 3);
-	for (uint32_t extension_id = 0; extension_id < count; extension_id++)
-	{
-		context_info.addDeviceExtension(required_extensions_glfw[extension_id]);
-	}
-	context_info.addInstanceLayer("VK_LAYER_LUNARG_monitor", true);
-	context_info.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);
-	context_info.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-
-
+        ImGui::SliderFloat3("Position", &verusApp.m_pcRaster.lightPosition.x, -20.f, 20.f);
+        ImGui::SliderFloat("Intensity", &verusApp.m_pcRaster.lightIntensity, 0.f, 150.f);
+    }
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+static int const SAMPLE_WIDTH = 1280;
+static int const SAMPLE_HEIGHT = 720;
 
+
+//--------------------------------------------------------------------------------------------------
+// Application Entry
+//
+int main(int argc, char** argv)
+{
+    UNUSED(argc);
+
+    // Setup GLFW window
+    glfwSetErrorCallback(onErrorCallback);
+    if (!glfwInit())
+    {
+        return 1;
+    }
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(SAMPLE_WIDTH, SAMPLE_HEIGHT, PROJECT_NAME, nullptr, nullptr);
+
+
+    // Setup camera
+    CameraManip.setWindowSize(SAMPLE_WIDTH, SAMPLE_HEIGHT);
+    CameraManip.setLookat(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+
+    // Setup Vulkan
+    if (!glfwVulkanSupported())
+    {
+        printf("GLFW: Vulkan Not Supported\n");
+        return 1;
+    }
+
+    // setup some basic things for the sample, logging file for example
+    NVPSystem system(PROJECT_NAME);
+
+    // Search path for shaders and other media
+    defaultSearchPaths = {
+        NVPSystem::exePath() + PROJECT_RELDIRECTORY,
+        NVPSystem::exePath() + PROJECT_RELDIRECTORY "..",
+        std::string(PROJECT_NAME),
+    };
+
+    // Vulkan required extensions
+    assert(glfwVulkanSupported() == 1);
+    uint32_t count{ 0 };
+    auto     reqExtensions = glfwGetRequiredInstanceExtensions(&count);
+
+    // Requesting Vulkan extensions and layers
+    nvvk::ContextCreateInfo contextInfo;
+    contextInfo.setVersion(1, 2);                       // Using Vulkan 1.2
+    for (uint32_t ext_id = 0; ext_id < count; ext_id++)  // Adding required extensions (surface, win32, linux, ..)
+        contextInfo.addInstanceExtension(reqExtensions[ext_id]);
+    contextInfo.addInstanceLayer("VK_LAYER_LUNARG_monitor", true);              // FPS in titlebar
+    contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);  // Allow debug names
+    contextInfo.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);            // Enabling ability to present rendering
+
+    // Creating Vulkan base application
+    nvvk::Context vkctx{};
+    vkctx.initInstance(contextInfo);
+    // Find all compatible devices
+    auto compatibleDevices = vkctx.getCompatibleDevices(contextInfo);
+    assert(!compatibleDevices.empty());
+    // Use a compatible device
+    vkctx.initDevice(compatibleDevices[0], contextInfo);
+
+    // Create example
+    VerusApp verusApp;
+
+    // Window need to be opened to get the surface on which to draw
+    const VkSurfaceKHR surface = verusApp.getVkSurface(vkctx.m_instance, window);
+    vkctx.setGCTQueueWithPresent(surface);
+
+    verusApp.setup(vkctx.m_instance, vkctx.m_device, vkctx.m_physicalDevice, vkctx.m_queueGCT.familyIndex);
+    verusApp.createSwapchain(surface, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+    verusApp.createDepthBuffer();
+    verusApp.createRenderPass();
+    verusApp.createFrameBuffers();
+
+    // Setup Imgui
+    verusApp.initGUI(0);  // Using sub-pass 0
+
+    // Creation of the example
+    verusApp.loadModel(nvh::findFile("scenes/cornell_box.obj", defaultSearchPaths, true));
+
+    verusApp.createOffscreenRender();
+    verusApp.createDescriptorSetLayout();
+    verusApp.createGraphicsPipeline();
+    verusApp.createUniformBuffer();
+    verusApp.createObjDescriptionBuffer();
+    verusApp.updateDescriptorSet();
+
+    verusApp.createPostDescriptor();
+    verusApp.createPostPipeline();
+    verusApp.updatePostDescriptorSet();
+    glm::vec4 clearColor = glm::vec4(1, 1, 1, 1.00f);
+
+
+    verusApp.setupGlfwCallbacks(window);
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    // Main loop
+    while (!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
+        if (verusApp.isMinimized())
+            continue;
+
+        // Start the Dear ImGui frame
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        // Show UI window.
+        if (verusApp.showGui())
+        {
+            ImGuiH::Panel::Begin();
+            ImGui::ColorEdit3("Clear color", reinterpret_cast<float*>(&clearColor));
+            renderUI(verusApp);
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+            ImGuiH::Control::Info("", "", "(F10) Toggle Pane", ImGuiH::Control::Flags::Disabled);
+            ImGuiH::Panel::End();
+        }
+
+        // Start rendering the scene
+        verusApp.prepareFrame();
+
+        // Start command buffer of this frame
+        auto                   curFrame = verusApp.getCurFrame();
+        const VkCommandBuffer& cmdBuf = verusApp.getCommandBuffers()[curFrame];
+
+        VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmdBuf, &beginInfo);
+
+        // Updating camera buffer
+        verusApp.updateUniformBuffer(cmdBuf);
+
+        // Clearing screen
+        std::array<VkClearValue, 2> clearValues{};
+        clearValues[0].color = { {clearColor[0], clearColor[1], clearColor[2], clearColor[3]} };
+        clearValues[1].depthStencil = { 1.0f, 0 };
+
+        // Offscreen render pass
+        {
+            VkRenderPassBeginInfo offscreenRenderPassBeginInfo{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+            offscreenRenderPassBeginInfo.clearValueCount = 2;
+            offscreenRenderPassBeginInfo.pClearValues = clearValues.data();
+            offscreenRenderPassBeginInfo.renderPass = verusApp.m_offscreenRenderPass;
+            offscreenRenderPassBeginInfo.framebuffer = verusApp.m_offscreenFramebuffer;
+            offscreenRenderPassBeginInfo.renderArea = { {0, 0}, verusApp.getSize() };
+
+            // Rendering Scene
+            vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+            verusApp.rasterize(cmdBuf);
+            vkCmdEndRenderPass(cmdBuf);
+        }
+
+
+        // 2nd rendering pass: tone mapper, UI
+        {
+            VkRenderPassBeginInfo postRenderPassBeginInfo{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+            postRenderPassBeginInfo.clearValueCount = 2;
+            postRenderPassBeginInfo.pClearValues = clearValues.data();
+            postRenderPassBeginInfo.renderPass = verusApp.getRenderPass();
+            postRenderPassBeginInfo.framebuffer = verusApp.getFramebuffers()[curFrame];
+            postRenderPassBeginInfo.renderArea = { {0, 0}, verusApp.getSize() };
+
+            // Rendering tonemapper
+            vkCmdBeginRenderPass(cmdBuf, &postRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+            verusApp.drawPost(cmdBuf);
+            // Rendering UI
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdBuf);
+            vkCmdEndRenderPass(cmdBuf);
+        }
+
+        // Submit for display
+        vkEndCommandBuffer(cmdBuf);
+        verusApp.submitFrame();
+    }
+
+    // Cleanup
+    vkDeviceWaitIdle(verusApp.getDevice());
+
+    verusApp.destroyResources();
+    verusApp.destroy();
+    vkctx.deinit();
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    return 0;
+}

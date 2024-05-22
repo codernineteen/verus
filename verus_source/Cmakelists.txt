@@ -2,19 +2,32 @@
 # Copyright 2020 NVIDIA Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.9.6 FATAL_ERROR)
 
 # Construct the project name PROJNAME from the directory name
 get_filename_component(PROJNAME ${CMAKE_CURRENT_LIST_DIR} NAME)
-project(${PROJNAME})
+project(${PROJNAME} LANGUAGES C CXX)
+
+message(STATUS "------------------------------------")
+message(STATUS "Start processing project ${PROJNAME}")
 
 #####################################################################################
+# C++ target and defines
+set(CMAKE_CXX_STANDARD 17)
+add_executable(${PROJNAME})
 _add_project_definitions(${PROJNAME})
 
 #####################################################################################
 # Source files for this project
 #
 file(GLOB SOURCE_FILES *.cpp *.hpp *.inl *.h *.c)
+
+file(GLOB EXTRA_COMMON ${VERUS_PRJ_DIR}/common/*.*)
+list(APPEND COMMON_SOURCE_FILES ${EXTRA_COMMON})
+include_directories(${VERUS_PRJ_DIR}/common)
+
+file(GLOB APP_SOURCES ${CMAKE_CURRENT_LIST_DIR}/app/*.*)
+file(GLOB SHADER_HEADER ${CMAKE_CURRENT_LIST_DIR}/shaders/*.h)
 
 #####################################################################################
 # For _edit, we add a check to make sure readers create a shaders directory
@@ -46,18 +59,13 @@ endforeach()
 # more than one file can be given: _compile_GLSL("GLSL_mesh.vert;GLSL_mesh.frag" "GLSL_mesh.spv" GLSL_SOURCES)
 # the SPIR-V validator is fine as long as files are for different pipeline stages (entry points still need to be main())
 #_compile_GLSL(<source(s)> <target spv> <LIST where files are appended>)
-SET(VULKAN_TARGET_ENV vulkan1.2)
+compile_glsl_directory(
+	SRC "${CMAKE_CURRENT_SOURCE_DIR}/shaders" 
+	DST "${CMAKE_CURRENT_SOURCE_DIR}/spv" 
+	VULKAN_TARGET "vulkan1.3"
+	DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
+	)
 
-UNSET(GLSL_SOURCES)
-UNSET(SPV_OUTPUT)
-file(GLOB_RECURSE GLSL_HEADER_FILES "shaders/*.h")
-file(GLOB_RECURSE GLSL_SOURCE_FILES "shaders/*.glsl")
-foreach(GLSL ${GLSL_SOURCE_FILES})
-    get_filename_component(FILE_NAME ${GLSL} NAME)
-    _compile_GLSL(${GLSL} "shaders/${FILE_NAME}.spv" GLSL_SOURCES SPV_OUTPUT)
-endforeach(GLSL)
-
-list(APPEND GLSL_SOURCES ${GLSL_HEADER_FILES})
 
 #####################################################################################
 # HLSL to SPIR-V build
@@ -75,16 +83,24 @@ find_program(DXC_EXEC dxc HINTS
 
 message(STATUS ${DXC_EXEC})
 
-
 #####################################################################################
-# Executable
-#
-add_executable(${PROJNAME} ${SOURCE_FILES} ${COMMON_SOURCE_FILES} ${GLSL_SOURCES})
+# Sources
+target_sources(${PROJNAME} PUBLIC ${SOURCE_FILES} ${HEADER_FILES} ${SHADER_HEADER})
+target_sources(${PROJNAME} PUBLIC ${COMMON_SOURCE_FILES})
+target_sources(${PROJNAME} PUBLIC ${PACKAGE_SOURCE_FILES})
+target_sources(${PROJNAME} PUBLIC ${APP_SOURCES})
+target_sources(${PROJNAME} PUBLIC ${GLSL_SOURCES} ${GLSL_HEADERS})
 
 #####################################################################################
 # Source code group
 #
-source_group("Source Files" FILES ${SOURCE_FILES})
+source_group("Common"          FILES ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES})
+source_group("Sources"         FILES ${SOURCE_FILES})
+source_group("App"             FILES ${APP_SOURCES})
+source_group("Headers"         FILES ${HEADER_FILES})
+source_group("Shaders Sources" FILES ${GLSL_SOURCES})
+source_group("Shaders Headers" FILES ${GLSL_HEADERS})
+
 
 #####################################################################################
 # Linkage
