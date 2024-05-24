@@ -1,7 +1,3 @@
-
-# Copyright 2020 NVIDIA Corporation
-# SPDX-License-Identifier: Apache-2.0
-
 cmake_minimum_required(VERSION 3.9.6 FATAL_ERROR)
 
 # Construct the project name PROJNAME from the directory name
@@ -12,6 +8,95 @@ message(STATUS "------------------------------------")
 message(STATUS "Start processing project ${PROJNAME}")
 
 #####################################################################################
+# Function to compile HLSL to SPIR-V
+function(compile_hlsl_to_spirv)
+    set(oneValueArgs DST SHADER_TARGET SHADER_ENTRY DEPENDENCY)
+    set(multiValueArgs SOURCE_FILES)
+    cmake_parse_arguments(COMPILE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    # Find the dxc compiler provided by the Vulkan SDK
+    find_program(DXC_EXEC dxc HINTS
+      ${Vulkan_DXC_EXECUTABLE} 
+      /usr/bin 
+      /usr/local/bin 
+      ${VULKAN_SDK_PATH}/Bin
+      ${VULKAN_SDK_PATH}/Bin32
+      $ENV{VULKAN_SDK}/Bin/ 
+      $ENV{VULKAN_SDK}/Bin32/
+    )
+
+    message(STATUS "DXC_EXEC: ${DXC_EXEC}")
+
+    # Check if the compiler was found
+    if(NOT DXC_EXEC)
+      message(FATAL_ERROR "DXC compiler not found")
+      return()
+    endif()
+
+    if(NOT DEFINED COMPILE_DST)
+      message(FATAL_ERROR "DST not defined. Please define destination directory.")
+      return()
+    endif()
+
+    file(MAKE_DIRECTORY ${COMPILE_DST})
+    message(STATUS "Compile destination directory: ${COMPILE_DST}")
+
+    if(NOT DEFINED COMPILE_SOURCE_FILES)
+	  message(FATAL_ERROR "SOURCE_FILES not defined. Please define source files.")
+	  return()
+    endif()
+
+    if(NOT DEFINED COMPILE_SHADER_TARGET)
+      message(FATAL_ERROR "SHADER_TARGET not defined. Please define shader target.")
+	  return()
+    endif()
+
+    if(NOT DEFINED COMPILE_SHADER_ENTRY)
+	  message(FATAL_ERROR "SHADER_ENTRY not defined. Please define shader entry point.")
+      return()
+    endif()
+
+    # Setup the compile command for each HLSL source file
+    foreach(HLSL_SRC ${COMPILE_SOURCE_FILES})
+      # TODO: Add dependency check in a HLSL source if it includes a header file later.
+
+      ############# contstruct the compile command #############
+      set(COMPILE_CMD)
+      list(APPEND COMPILE_CMD -spirv) # Compile to SPIR-V
+      list(APPEND COMPILE_CMD -T ${COMPILE_SHADER_TARGET}) # Shader target
+      list(APPEND COMPILE_CMD -E ${COMPILE_SHADER_ENTRY}) # Entry point
+
+      get_filename_component(FILE_NAME ${HLSL_SRC} NAME)
+      set(HLSL_OUT "${COMPILE_DST}/${FILE_NAME}.spv") # output file location
+      list(APPEND _SPVS ${HLSL_OUT})
+
+      list(APPEND COMPILE_CMD ${HLSL_SRC})
+      list(APPEND COMPILE_CMD -Fo)
+      list(APPEND COMPILE_CMD ${HLSL_OUT})
+
+      message(STATUS "custom command: ${DXC_EXEC} ${COMPILE_CMD}")
+      ###########################################################
+
+      add_custom_command(
+        PRE_BUILD                                     # Run before compilation of application sources.
+        OUTPUT ${HLSL_OUT}                            # Output location
+        COMMAND echo ${DXC_EXEC} ${COMPILE_CMD}            # Run the command
+        COMMAND ${DXC_EXEC} ${COMPILE_CMD}            # Run the command
+        MAIN_DEPENDENCY ${HLSL_SRC}                   # Main dependency
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} # Working directory
+        VERBATIM
+      )
+    endforeach()
+
+    # Setting OUT variables
+    set(HLSL_SOURCES ${COMPILE_SOURCE_FILES} PARENT_SCOPE)
+    set(SPV_OUTPUT ${_SPVS} PARENT_SCOPE)
+endfunction()
+
+
+
+
+#####################################################################################
 # C++ target and defines
 set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJNAME})
@@ -19,7 +104,6 @@ _add_project_definitions(${PROJNAME})
 
 #####################################################################################
 # Source files for this project
-#
 file(GLOB SOURCE_FILES *.cpp *.hpp *.inl *.h *.c)
 
 file(GLOB EXTRA_COMMON ${VERUS_PRJ_DIR}/common/*.*)
@@ -32,12 +116,6 @@ file(GLOB SHADER_HEADER ${CMAKE_CURRENT_LIST_DIR}/shaders/*.h)
 #####################################################################################
 # For _edit, we add a check to make sure readers create a shaders directory
 # and place shaders inside that, instead of placing them in the main directory.
-# It's possible to miss creating this directory, and the effect will be that
-# shaders never appear to be compiled.
-# Instead of being a fatal error, we automatically fix things by copying files
-# to the right place when this happens. This only occurs for .glsl files, since
-# the first chapter that introduces shaders only uses .glsl files, and copying
-# .h files could cause problems if readers experiment with adding libraries.
 file(GLOB _GLSL_WRONG_LOCATION_FILES "*.glsl")
 if(_GLSL_WRONG_LOCATION_FILES)
   message(WARNING "It looks like some .glsl files were placed in the top level of _edit, rather than making a 'shaders' subdirectory and placing the shaders inside that! This script will move them to the shaders directory.")
@@ -55,33 +133,30 @@ endforeach()
 
 #####################################################################################
 # GLSL to SPIR-V custom build
-#
-# more than one file can be given: _compile_GLSL("GLSL_mesh.vert;GLSL_mesh.frag" "GLSL_mesh.spv" GLSL_SOURCES)
-# the SPIR-V validator is fine as long as files are for different pipeline stages (entry points still need to be main())
-#_compile_GLSL(<source(s)> <target spv> <LIST where files are appended>)
 compile_glsl_directory(
-	SRC "${CMAKE_CURRENT_SOURCE_DIR}/shaders" 
-	DST "${CMAKE_CURRENT_SOURCE_DIR}/spv" 
-	VULKAN_TARGET "vulkan1.3"
-	DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
-	)
-
+    SRC "${CMAKE_CURRENT_SOURCE_DIR}/shaders" 
+    DST "${CMAKE_CURRENT_SOURCE_DIR}/spv" 
+    VULKAN_TARGET "vulkan1.3"
+    DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
+)
 
 #####################################################################################
 # HLSL to SPIR-V build
+set(VERTEX_SHADER_TARGET vs_6_0)
+set(SHADER_ENTRY main)
 
-# first find the dxc compiler provided by the Vulkan SDK
-find_program(DXC_EXEC dxc HINTS
-  ${Vulkan_DXC_EXECUTABLE} 
-  /usr/bin 
-  /usr/local/bin 
-  ${VULKAN_SDK_PATH}/Bin
-  ${VULKAN_SDK_PATH}/Bin32
-  $ENV{VULKAN_SDK}/Bin/ 
-  $ENV{VULKAN_SDK}/Bin32/
+unset(HLSL_SOURCE_FILES)
+unset(SPV_OUTPUT)
+file(GLOB_RECURSE HLSL_SOURCE_FILES "shaders/vert_shader.hlsl")
+
+message(STATUS "Found target HLSL source files: ${HLSL_SOURCE_FILES}")
+
+compile_hlsl_to_spirv(
+    DST "${CMAKE_CURRENT_SOURCE_DIR}/spv"
+    SHADER_TARGET ${VERTEX_SHADER_TARGET}
+    SHADER_ENTRY ${SHADER_ENTRY}
+    SOURCE_FILES ${HLSL_SOURCE_FILES} 
 )
-
-message(STATUS ${DXC_EXEC})
 
 #####################################################################################
 # Sources
@@ -89,22 +164,19 @@ target_sources(${PROJNAME} PUBLIC ${SOURCE_FILES} ${HEADER_FILES} ${SHADER_HEADE
 target_sources(${PROJNAME} PUBLIC ${COMMON_SOURCE_FILES})
 target_sources(${PROJNAME} PUBLIC ${PACKAGE_SOURCE_FILES})
 target_sources(${PROJNAME} PUBLIC ${APP_SOURCES})
-target_sources(${PROJNAME} PUBLIC ${GLSL_SOURCES} ${GLSL_HEADERS})
+target_sources(${PROJNAME} PUBLIC ${GLSL_SOURCES} ${GLSL_HEADERS} ${HLSL_SOURCES})
 
 #####################################################################################
 # Source code group
-#
 source_group("Common"          FILES ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES})
 source_group("Sources"         FILES ${SOURCE_FILES})
 source_group("App"             FILES ${APP_SOURCES})
 source_group("Headers"         FILES ${HEADER_FILES})
-source_group("Shaders Sources" FILES ${GLSL_SOURCES})
-source_group("Shaders Headers" FILES ${GLSL_HEADERS})
-
+source_group("Shaders Sources" FILES ${GLSL_SOURCES} ${HLSL_SOURCES})
+source_group("Shaders Headers" FILES ${GLSL_HEADERS} ${HLSL_DEPENDENCIES})
 
 #####################################################################################
 # Linkage
-#
 target_link_libraries(${PROJNAME} ${PLATFORM_LIBRARIES} nvpro_core)
 
 foreach(DEBUGLIB ${LIBRARIES_DEBUG})
@@ -116,9 +188,8 @@ foreach(RELEASELIB ${LIBRARIES_OPTIMIZED})
 endforeach(RELEASELIB)
 
 #####################################################################################
-# copies binaries that need to be put next to the exe files (ZLib, etc.)
-#
-_finalize_target( ${PROJNAME} )
+# Copies binaries that need to be put next to the exe files (ZLib, etc.)
+_finalize_target(${PROJNAME})
 
 install(FILES ${SPV_OUTPUT} CONFIGURATIONS Release DESTINATION "bin_${ARCH}/${PROJNAME}/shaders")
 install(FILES ${SPV_OUTPUT} CONFIGURATIONS Debug DESTINATION "bin_${ARCH}_debug/${PROJNAME}/shaders")
