@@ -147,7 +147,7 @@ set(SHADER_ENTRY main)
 
 unset(HLSL_SOURCE_FILES)
 unset(SPV_OUTPUT)
-file(GLOB_RECURSE HLSL_SOURCE_FILES "shaders/vert_shader.hlsl")
+file(GLOB_RECURSE HLSL_SOURCE_FILES "shaders/VertexShader.hlsl")
 
 message(STATUS "Found target HLSL source files: ${HLSL_SOURCE_FILES}")
 
